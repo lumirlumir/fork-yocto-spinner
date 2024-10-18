@@ -162,13 +162,12 @@ class YoctoSpinner {
 	}
 
 	#render() {
-		const currentTime = Date.now();
-
 		// Ensure we only update the spinner frame at the wanted interval,
-		// even if the render method is called more often.
-		if (this.#currentFrame === -1 || currentTime - this.#lastSpinnerFrameTime >= this.#interval) {
-			this.#currentFrame = (this.#currentFrame + 1) % this.#frames.length;
-			this.#lastSpinnerFrameTime = currentTime;
+		// even if the frame method is called more often.
+		const now = Date.now();
+		if (this.#currentFrame === -1 || now - this.#lastSpinnerFrameTime >= this.#interval) {
+			this.#currentFrame = ++this.#currentFrame % this.#frames.length;
+			this.#lastSpinnerFrameTime = now;
 		}
 
 		const applyColor = yoctocolors[this.#color] ?? yoctocolors.cyan;
