@@ -143,7 +143,7 @@ class YoctoSpinner {
 
 	clear() {
 		if (!this.#isInteractive) {
-			return;
+			return this;
 		}
 
 		this.#stream.cursorTo(0);
@@ -157,6 +157,8 @@ class YoctoSpinner {
 		}
 
 		this.#lines = 0;
+
+		return this;
 	}
 
 	#render() {
