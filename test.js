@@ -3,6 +3,7 @@ import {PassThrough} from 'node:stream';
 import getStream from 'get-stream';
 import test from 'ava';
 import stripAnsi from 'strip-ansi';
+import yoctocolors from 'yoctocolors';
 import yoctoSpinner from './index.js';
 
 delete process.env.CI;
@@ -15,13 +16,13 @@ const getPassThroughStream = () => {
 	return stream;
 };
 
-const runSpinner = async (function_, options = {}) => {
-	const stream = getPassThroughStream();
+const runSpinner = async (function_, options = {}, testOptions = {}) => {
+	const stream = testOptions.stream ?? getPassThroughStream();
 	const output = getStream(stream);
 
 	const spinner = yoctoSpinner({
 		stream,
-		text: 'foo',
+		text: testOptions.text ?? 'foo',
 		spinner: {
 			frames: ['-'],
 			interval: 10_000,
@@ -117,4 +118,45 @@ test('spinner stops with success symbol and final text', async t => {
 test('spinner stops with error symbol and final text', async t => {
 	const output = await runSpinner(spinner => spinner.error('failed'));
 	t.regex(output, /✖️ failed\n$/);
+});
+
+test('spinner accounts for ANSI escape codes when computing line breaks', async t => {
+	const scenarios = [
+		// 1 symbol + 1 space + 78 chars = 80 chars, max for one line
+		{
+			textLength: 78,
+			clearLineCount: 1,
+		},
+
+		// 1 symbol + 1 space + 79 chars = 81 chars, split on two lines
+		{
+			textLength: 79,
+			clearLineCount: 2,
+		},
+	];
+
+	for (const scenario of scenarios) {
+		let clearLineCount = 0;
+
+		const stream = new PassThrough();
+		stream.clearLine = () => {
+			clearLineCount += 1;
+		};
+
+		stream.cursorTo = () => {};
+		stream.moveCursor = () => {};
+		stream.isTTY = true;
+
+		let text = '';
+		for (let i = 0; i < scenario.textLength; i++) {
+			text += yoctocolors.blue('a');
+		}
+
+		// eslint-disable-next-line no-await-in-loop
+		await runSpinner(spinner => spinner.stop(), {}, {
+			stream,
+			text,
+		});
+		t.is(clearLineCount, scenario.clearLineCount);
+	}
 });

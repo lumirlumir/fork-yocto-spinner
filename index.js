@@ -1,4 +1,5 @@
 import process from 'node:process';
+import {stripVTControlCharacters} from 'node:util';
 import yoctocolors from 'yoctocolors';
 
 const isUnicodeSupported = process.platform !== 'win32' || Boolean(process.env.WT_SESSION);
@@ -192,7 +193,7 @@ class YoctoSpinner {
 
 	#lineCount(text) {
 		const width = this.#stream.columns ?? 80;
-		const lines = text.split('\n');
+		const lines = stripVTControlCharacters(text).split('\n');
 
 		let lineCount = 0;
 		for (const line of lines) {
