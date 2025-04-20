@@ -2,7 +2,9 @@ import process from 'node:process';
 import {stripVTControlCharacters} from 'node:util';
 import yoctocolors from 'yoctocolors';
 
-const isUnicodeSupported = process.platform !== 'win32' || Boolean(process.env.WT_SESSION);
+const isUnicodeSupported = process.platform !== 'win32'
+	|| Boolean(process.env.WT_SESSION) // Windows Terminal
+	|| process.env.TERM_PROGRAM === 'vscode';
 
 const isInteractive = stream => Boolean(
 	stream.isTTY
