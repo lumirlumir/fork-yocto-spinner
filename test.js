@@ -49,7 +49,7 @@ test('spinner.success()', async t => {
 
 test('spinner.error()', async t => {
 	const output = await runSpinner(spinner => spinner.error());
-	t.regex(output, /✖️ foo\n$/);
+	t.regex(output, /✖ foo\n$/);
 });
 
 test('spinner.warning()', async t => {
@@ -117,7 +117,7 @@ test('spinner stops with success symbol and final text', async t => {
 
 test('spinner stops with error symbol and final text', async t => {
 	const output = await runSpinner(spinner => spinner.error('failed'));
-	t.regex(output, /✖️ failed\n$/);
+	t.regex(output, /✖ failed\n$/);
 });
 
 test('spinner accounts for ANSI escape codes when computing line breaks', async t => {
