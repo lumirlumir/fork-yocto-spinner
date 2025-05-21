@@ -15,7 +15,7 @@ const isInteractive = stream => Boolean(
 const infoSymbol = yoctocolors.blue(isUnicodeSupported ? 'ℹ' : 'i');
 const successSymbol = yoctocolors.green(isUnicodeSupported ? '✔' : '√');
 const warningSymbol = yoctocolors.yellow(isUnicodeSupported ? '⚠' : '‼');
-const errorSymbol = yoctocolors.red(isUnicodeSupported ? '✖️' : '×');
+const errorSymbol = yoctocolors.red(isUnicodeSupported ? '✖' : '×');
 
 const defaultSpinner = {
 	frames: isUnicodeSupported
