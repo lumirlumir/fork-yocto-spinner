@@ -1,3 +1,4 @@
+import {setTimeout as delay} from 'node:timers/promises';
 import process from 'node:process';
 import {PassThrough} from 'node:stream';
 import getStream from 'get-stream';
@@ -18,6 +19,11 @@ const getPassThroughStream = () => {
 
 const runSpinner = async (function_, options = {}, testOptions = {}) => {
 	const stream = testOptions.stream ?? getPassThroughStream();
+	// Set isTTY to false by default for tests to get predictable newline behavior
+	if (stream.isTTY === undefined) {
+		stream.isTTY = false;
+	}
+
 	const output = getStream(stream);
 
 	const spinner = yoctoSpinner({
@@ -159,4 +165,41 @@ test('spinner accounts for ANSI escape codes when computing line breaks', async 
 		});
 		t.is(clearLineCount, scenario.clearLineCount);
 	}
+});
+
+test('spinner in non-interactive mode only renders on text changes', async t => {
+	const stream = getPassThroughStream();
+	stream.isTTY = false;
+
+	const output = getStream(stream);
+
+	const spinner = yoctoSpinner({
+		stream,
+		text: 'initial text',
+		spinner: {
+			frames: ['-'],
+			interval: 10,
+		},
+	});
+
+	spinner.start();
+
+	// Wait to ensure no additional renders happen
+	await delay(50);
+
+	spinner.text = 'changed text';
+
+	await delay(50);
+
+	spinner.stop('final text');
+	stream.end();
+
+	const result = stripAnsi(await output);
+	const lines = result.trim().split('\n');
+
+	// Should only have 3 lines: initial, changed, and final
+	t.is(lines.length, 3);
+	t.is(lines[0], '- initial text');
+	t.is(lines[1], '- changed text');
+	t.is(lines[2], 'final text');
 });

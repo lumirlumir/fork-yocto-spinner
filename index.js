@@ -52,6 +52,7 @@ class YoctoSpinner {
 	#exitHandlerBound;
 	#isInteractive;
 	#lastSpinnerFrameTime = 0;
+	#isSpinning = false;
 
 	constructor(options = {}) {
 		const spinner = options.spinner ?? defaultSpinner;
@@ -73,13 +74,17 @@ class YoctoSpinner {
 			return this;
 		}
 
+		this.#isSpinning = true;
 		this.#hideCursor();
 		this.#render();
 		this.#subscribeToProcessEvents();
 
-		this.#timer = setInterval(() => {
-			this.#render();
-		}, this.#interval);
+		// Only start the timer in interactive mode
+		if (this.#isInteractive) {
+			this.#timer = setInterval(() => {
+				this.#render();
+			}, this.#interval);
+		}
 
 		return this;
 	}
@@ -89,8 +94,12 @@ class YoctoSpinner {
 			return this;
 		}
 
-		clearInterval(this.#timer);
-		this.#timer = undefined;
+		this.#isSpinning = false;
+		if (this.#timer) {
+			clearInterval(this.#timer);
+			this.#timer = undefined;
+		}
+
 		this.#showCursor();
 		this.clear();
 		this.#unsubscribeFromProcessEvents();
@@ -123,7 +132,7 @@ class YoctoSpinner {
 	}
 
 	get isSpinning() {
-		return this.#timer !== undefined;
+		return this.#isSpinning;
 	}
 
 	get text() {
