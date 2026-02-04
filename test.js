@@ -9,6 +9,9 @@ import yoctoSpinner from './index.js';
 
 delete process.env.CI;
 
+const synchronizedOutputEnable = '\u001B[?2026h';
+const synchronizedOutputDisable = '\u001B[?2026l';
+
 const getPassThroughStream = () => {
 	const stream = new PassThrough();
 	stream.clearLine = () => {};
@@ -94,6 +97,31 @@ test('spinner with non-TTY stream', t => {
 test('spinner starts with custom text', async t => {
 	const output = await runSpinner(spinner => spinner.stop(), {text: 'custom'});
 	t.is(output, '- custom\n');
+});
+
+test('spinner uses synchronized output in interactive mode', async t => {
+	const stream = getPassThroughStream();
+	stream.isTTY = true;
+
+	const output = getStream(stream);
+
+	const spinner = yoctoSpinner({
+		stream,
+		text: 'foo',
+		spinner: {
+			frames: ['-'],
+			interval: 10_000,
+		},
+	});
+
+	spinner.start();
+	spinner.stop();
+	stream.end();
+
+	const result = await output;
+	t.true(result.includes(synchronizedOutputEnable));
+	t.true(result.includes(synchronizedOutputDisable));
+	t.true(result.indexOf(synchronizedOutputEnable) < result.indexOf(synchronizedOutputDisable));
 });
 
 test('spinner starts and changes text multiple times', async t => {

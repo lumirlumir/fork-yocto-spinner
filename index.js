@@ -40,6 +40,9 @@ const defaultSpinner = {
 	interval: 80,
 };
 
+const SYNCHRONIZED_OUTPUT_ENABLE = '\u001B[?2026h';
+const SYNCHRONIZED_OUTPUT_DISABLE = '\u001B[?2026l';
+
 class YoctoSpinner {
 	#frames;
 	#interval;
@@ -158,6 +161,12 @@ class YoctoSpinner {
 			return this;
 		}
 
+		this.#clearWithoutSynchronizedOutput();
+
+		return this;
+	}
+
+	#clearWithoutSynchronizedOutput() {
 		this.#stream.cursorTo(0);
 
 		for (let index = 0; index < this.#lines; index++) {
@@ -169,11 +178,23 @@ class YoctoSpinner {
 		}
 
 		this.#lines = 0;
+	}
 
-		return this;
+	#withSynchronizedOutput(action) {
+		if (!this.#isInteractive) {
+			return action();
+		}
+
+		try {
+			this.#write(SYNCHRONIZED_OUTPUT_ENABLE);
+			return action();
+		} finally {
+			this.#write(SYNCHRONIZED_OUTPUT_DISABLE);
+		}
 	}
 
 	#render() {
+		const useSynchronizedOutput = this.#isInteractive;
 		// Ensure we only update the spinner frame at the wanted interval,
 		// even if the frame method is called more often.
 		const now = Date.now();
@@ -190,8 +211,14 @@ class YoctoSpinner {
 			string += '\n';
 		}
 
-		this.clear();
-		this.#write(string);
+		if (useSynchronizedOutput) {
+			this.#withSynchronizedOutput(() => {
+				this.#clearWithoutSynchronizedOutput();
+				this.#write(string);
+			});
+		} else {
+			this.#write(string);
+		}
 
 		if (this.#isInteractive) {
 			this.#lines = this.#lineCount(string);
