@@ -94,6 +94,19 @@ test('spinner with non-TTY stream', t => {
 	t.pass();
 });
 
+test('spinner does not hook non-interactive streams', t => {
+	const stream = getPassThroughStream();
+	stream.isTTY = false;
+
+	const spinner = yoctoSpinner({stream, text: 'foo'});
+	const originalWrite = stream.write;
+
+	spinner.start();
+	t.is(stream.write, originalWrite);
+	spinner.stop();
+	t.is(stream.write, originalWrite);
+});
+
 test('spinner starts with custom text', async t => {
 	const output = await runSpinner(spinner => spinner.stop(), {text: 'custom'});
 	t.is(output, '- custom\n');
@@ -230,4 +243,368 @@ test('spinner in non-interactive mode only renders on text changes', async t => 
 	t.is(lines[0], '- initial text');
 	t.is(lines[1], '- changed text');
 	t.is(lines[2], 'final text');
+});
+
+test('spinner keeps output below external writes while spinning', t => {
+	const stream = getPassThroughStream();
+	stream.isTTY = true;
+
+	const cursorToCalls = [];
+	const writeEvents = [];
+
+	const originalWrite = stream.write;
+	stream.write = function (content, encoding, callback) {
+		writeEvents.push(stripAnsi(String(content)));
+		return originalWrite.call(this, content, encoding, callback);
+	};
+
+	stream.cursorTo = () => {
+		cursorToCalls.push('cursorTo');
+	};
+
+	const spinner = yoctoSpinner({
+		stream,
+		text: 'spinning',
+		spinner: {
+			frames: ['-'],
+			interval: 10_000,
+		},
+	});
+
+	spinner.start();
+
+	const cursorToCountAfterStart = cursorToCalls.length;
+
+	stream.write('External log\n');
+
+	spinner.stop('done');
+	stream.end();
+
+	t.true(cursorToCalls.length > cursorToCountAfterStart, 'external write should clear the spinner before output');
+
+	const externalWriteIndex = writeEvents.findIndex(event => event.includes('External log'));
+	t.true(externalWriteIndex !== -1);
+
+	const reRenderIndex = writeEvents.findIndex((event, index) => index > externalWriteIndex && event.includes('spinning'));
+	t.true(reRenderIndex !== -1, 'spinner should re-render after external write');
+});
+
+test('external writes preserve chunk boundaries without injected newlines', async t => {
+	const stream = getPassThroughStream();
+	stream.isTTY = true;
+	const outputPromise = getStream(stream);
+
+	const spinner = yoctoSpinner({
+		stream,
+		text: 'processing',
+		spinner: {
+			frames: ['-'],
+			interval: 10_000,
+		},
+	});
+
+	spinner.start();
+
+	stream.write('Downloading ');
+	stream.write('42%');
+	stream.write('\n');
+
+	spinner.stop();
+	stream.end();
+
+	const output = stripAnsi(await outputPromise).replaceAll('\r', '');
+	t.true(output.includes('Downloading 42%\n'));
+	t.false(output.includes('Downloading \n42%'));
+});
+
+test('spinner defers renders until a newline completes the external line', async t => {
+	const stream = getPassThroughStream();
+	stream.isTTY = true;
+
+	const writeEvents = [];
+
+	const originalWrite = stream.write;
+	stream.write = function (content, encoding, callback) {
+		writeEvents.push(stripAnsi(String(content)));
+		return originalWrite.call(this, content, encoding, callback);
+	};
+
+	const spinner = yoctoSpinner({
+		stream,
+		text: 'waiting',
+		spinner: {
+			frames: ['-'],
+			interval: 20,
+		},
+	});
+
+	spinner.start();
+	const baselineWrites = writeEvents.length;
+
+	stream.write('Partial without newline');
+	await delay(80);
+
+	t.is(writeEvents.length, baselineWrites + 1, 'spinner should not render while line is incomplete');
+
+	stream.write('\n');
+	await delay(40);
+
+	t.true(writeEvents.length > baselineWrites + 1, 'spinner should render after newline');
+
+	spinner.stop();
+	stream.end();
+});
+
+test('spinner defers renders on carriage return updates', async t => {
+	const stream = getPassThroughStream();
+	stream.isTTY = true;
+
+	const writeEvents = [];
+
+	const originalWrite = stream.write;
+	stream.write = function (content, encoding, callback) {
+		writeEvents.push(stripAnsi(String(content)));
+		return originalWrite.call(this, content, encoding, callback);
+	};
+
+	const spinner = yoctoSpinner({
+		stream,
+		text: 'waiting',
+		spinner: {
+			frames: ['-'],
+			interval: 20,
+		},
+	});
+
+	spinner.start();
+	const baselineWrites = writeEvents.length;
+
+	stream.write('\rProgress 1');
+	await delay(80);
+
+	t.is(writeEvents.length, baselineWrites + 1, 'spinner should not render while carriage return updates are in progress');
+
+	stream.write('\n');
+	await delay(40);
+
+	t.true(writeEvents.length > baselineWrites + 1, 'spinner should render after newline');
+
+	spinner.stop();
+	stream.end();
+});
+
+test('spinner resumes after carriage return newline', async t => {
+	const stream = getPassThroughStream();
+	stream.isTTY = true;
+
+	const writeEvents = [];
+
+	const originalWrite = stream.write;
+	stream.write = function (content, encoding, callback) {
+		writeEvents.push(stripAnsi(String(content)));
+		return originalWrite.call(this, content, encoding, callback);
+	};
+
+	const spinner = yoctoSpinner({
+		stream,
+		text: 'waiting',
+		spinner: {
+			frames: ['-'],
+			interval: 20,
+		},
+	});
+
+	spinner.start();
+	const baselineWrites = writeEvents.length;
+
+	stream.write('\rProgress 1\r\n');
+	await delay(80);
+
+	t.true(writeEvents.length > baselineWrites + 1, 'spinner should render after carriage return newline');
+
+	spinner.stop();
+	stream.end();
+});
+
+test('spinner defers when chunk ends with an incomplete line', async t => {
+	const stream = getPassThroughStream();
+	stream.isTTY = true;
+
+	const writeEvents = [];
+
+	const originalWrite = stream.write;
+	stream.write = function (content, encoding, callback) {
+		writeEvents.push(stripAnsi(String(content)));
+		return originalWrite.call(this, content, encoding, callback);
+	};
+
+	const spinner = yoctoSpinner({
+		stream,
+		text: 'waiting',
+		spinner: {
+			frames: ['-'],
+			interval: 20,
+		},
+	});
+
+	spinner.start();
+	const baselineWrites = writeEvents.length;
+
+	stream.write('Step 1\nProgress 50%');
+	await delay(80);
+
+	t.is(writeEvents.length, baselineWrites + 1, 'spinner should not render while last line is incomplete');
+
+	stream.write('\n');
+	await delay(40);
+
+	t.true(writeEvents.length > baselineWrites + 1, 'spinner should render after newline');
+
+	spinner.stop();
+	stream.end();
+});
+
+test('spinner stop preserves partial external lines', async t => {
+	const stream = getPassThroughStream();
+	stream.isTTY = true;
+	const outputPromise = getStream(stream);
+
+	const spinner = yoctoSpinner({
+		stream,
+		text: 'waiting',
+		spinner: {
+			frames: ['-'],
+			interval: 10_000,
+		},
+	});
+
+	spinner.start();
+
+	stream.write('Downloading ');
+
+	spinner.stop('done');
+	stream.end();
+
+	const output = stripAnsi(await outputPromise).replaceAll('\r', '');
+
+	t.true(output.includes('Downloading \n'));
+	t.regex(output, /Downloading \n[\s\S]*done\n/);
+	t.false(output.includes('Downloading done'));
+});
+
+test('spinner stop without final text preserves partial external lines', async t => {
+	const stream = getPassThroughStream();
+	stream.isTTY = true;
+	const outputPromise = getStream(stream);
+
+	const spinner = yoctoSpinner({
+		stream,
+		text: 'waiting',
+		spinner: {
+			frames: ['-'],
+			interval: 10_000,
+		},
+	});
+
+	spinner.start();
+
+	stream.write('Downloading ');
+
+	spinner.stop();
+	stream.end();
+
+	const output = stripAnsi(await outputPromise).replaceAll('\r', '');
+
+	t.true(output.includes('Downloading '));
+	t.false(output.includes('Downloading \n'));
+});
+
+test('spinner does not defer when stdout is non-interactive', async t => {
+	const stream = getPassThroughStream();
+	stream.isTTY = true;
+
+	const stdoutStream = getPassThroughStream();
+	stdoutStream.isTTY = false;
+
+	const outputPromise = getStream(stream);
+
+	const spinner = yoctoSpinner({
+		stream,
+		text: 'waiting',
+		spinner: {
+			frames: ['-'],
+			interval: 20,
+		},
+	});
+
+	const originalStdoutWrite = process.stdout.write;
+	process.stdout.write = stdoutStream.write.bind(stdoutStream);
+
+	try {
+		spinner.start();
+		stdoutStream.write('chunk without newline');
+		await delay(80);
+
+		spinner.stop('done');
+		stream.end();
+
+		const output = stripAnsi(await outputPromise);
+		t.true(output.includes('done\n'));
+	} finally {
+		process.stdout.write = originalStdoutWrite;
+	}
+});
+
+test('spinner preserves external stream.write wrappers on stop', t => {
+	const stream = getPassThroughStream();
+	stream.isTTY = true;
+
+	const spinner = yoctoSpinner({
+		stream,
+		text: 'wrapper',
+		spinner: {
+			frames: ['-'],
+			interval: 10_000,
+		},
+	});
+
+	spinner.start();
+
+	const originalWrite = stream.write;
+	const wrappedWrite = function (content, encoding, callback) {
+		return originalWrite.call(this, content, encoding, callback);
+	};
+
+	stream.write = wrappedWrite;
+	spinner.stop();
+
+	t.is(stream.write, wrappedWrite);
+	stream.end();
+});
+
+test('spinner preserves pre-existing stream.write wrappers', t => {
+	const stream = getPassThroughStream();
+	stream.isTTY = true;
+
+	const originalWrite = stream.write;
+	const wrappedWrite = function (content, encoding, callback) {
+		return originalWrite.call(this, content, encoding, callback);
+	};
+
+	stream.write = wrappedWrite;
+
+	const spinner = yoctoSpinner({
+		stream,
+		text: 'wrapper',
+		spinner: {
+			frames: ['-'],
+			interval: 10_000,
+		},
+	});
+
+	spinner.start();
+	spinner.stop();
+
+	t.is(stream.write, wrappedWrite);
+	stream.end();
 });

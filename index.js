@@ -43,6 +43,8 @@ const defaultSpinner = {
 const SYNCHRONIZED_OUTPUT_ENABLE = '\u001B[?2026h';
 const SYNCHRONIZED_OUTPUT_DISABLE = '\u001B[?2026l';
 
+const activeHooksPerStream = new Set();
+
 class YoctoSpinner {
 	#frames;
 	#interval;
@@ -56,6 +58,9 @@ class YoctoSpinner {
 	#isInteractive;
 	#lastSpinnerFrameTime = 0;
 	#isSpinning = false;
+	#hookedStreams = new Map();
+	#isInternalWrite = false;
+	#isDeferringRender = false;
 
 	constructor(options = {}) {
 		const spinner = options.spinner ?? defaultSpinner;
@@ -66,6 +71,130 @@ class YoctoSpinner {
 		this.#color = options.color ?? 'cyan';
 		this.#isInteractive = isInteractive(this.#stream);
 		this.#exitHandlerBound = this.#exitHandler.bind(this);
+	}
+
+	#internalWrite(action) {
+		this.#isInternalWrite = true;
+		try {
+			return action();
+		} finally {
+			this.#isInternalWrite = false;
+		}
+	}
+
+	#stringifyChunk(chunk, encoding) {
+		if (chunk === undefined || chunk === null) {
+			return '';
+		}
+
+		if (typeof chunk === 'string') {
+			return chunk;
+		}
+
+		if (Buffer.isBuffer(chunk) || ArrayBuffer.isView(chunk)) {
+			const normalizedEncoding = typeof encoding === 'string' && encoding !== '' && encoding !== 'buffer' ? encoding : 'utf8';
+			return Buffer.from(chunk).toString(normalizedEncoding);
+		}
+
+		return String(chunk);
+	}
+
+	#withSynchronizedOutput(action) {
+		if (!this.#isInteractive) {
+			return action();
+		}
+
+		try {
+			this.#write(SYNCHRONIZED_OUTPUT_ENABLE);
+			return action();
+		} finally {
+			this.#write(SYNCHRONIZED_OUTPUT_DISABLE);
+		}
+	}
+
+	#hookStream(stream) {
+		if (!stream || this.#hookedStreams.has(stream) || typeof stream.write !== 'function') {
+			return;
+		}
+
+		if (activeHooksPerStream.has(stream)) {
+			return;
+		}
+
+		const originalWrite = stream.write;
+		const hookedWrite = (...writeArguments) => this.#hookedWrite(stream, originalWrite, writeArguments);
+		this.#hookedStreams.set(stream, {originalWrite, hookedWrite});
+		activeHooksPerStream.add(stream);
+		stream.write = hookedWrite;
+	}
+
+	#installHook() {
+		if (!this.#isInteractive || this.#hookedStreams.size > 0) {
+			return;
+		}
+
+		const streamsToHook = new Set([this.#stream]);
+
+		if (this.#stream === process.stdout || this.#stream === process.stderr) {
+			if (isInteractive(process.stdout)) {
+				streamsToHook.add(process.stdout);
+			}
+
+			if (isInteractive(process.stderr)) {
+				streamsToHook.add(process.stderr);
+			}
+		}
+
+		for (const stream of streamsToHook) {
+			this.#hookStream(stream);
+		}
+	}
+
+	#uninstallHook() {
+		for (const [stream, hookInfo] of this.#hookedStreams) {
+			if (stream.write === hookInfo.hookedWrite) {
+				stream.write = hookInfo.originalWrite;
+			}
+
+			activeHooksPerStream.delete(stream);
+		}
+
+		this.#hookedStreams.clear();
+	}
+
+	#hookedWrite(stream, originalWrite, writeArguments) {
+		const [chunk, encoding, callback] = writeArguments;
+		let resolvedEncoding = encoding;
+		let resolvedCallback = callback;
+
+		if (typeof resolvedEncoding === 'function') {
+			resolvedCallback = resolvedEncoding;
+			resolvedEncoding = undefined;
+		}
+
+		if (this.#isInternalWrite || !this.isSpinning) {
+			return originalWrite.call(stream, chunk, resolvedEncoding, resolvedCallback);
+		}
+
+		if (this.#lines > 0) {
+			this.clear();
+		}
+
+		const chunkString = this.#stringifyChunk(chunk, resolvedEncoding);
+		const chunkTerminatesLine = chunkString.at(-1) === '\n';
+		const writeResult = originalWrite.call(stream, chunk, resolvedEncoding, resolvedCallback);
+
+		if (chunkTerminatesLine) {
+			this.#isDeferringRender = false;
+		} else if (chunkString !== '') {
+			this.#isDeferringRender = true;
+		}
+
+		if (this.isSpinning && !this.#isDeferringRender) {
+			this.#render();
+		}
+
+		return writeResult;
 	}
 
 	start(text) {
@@ -79,6 +208,7 @@ class YoctoSpinner {
 
 		this.#isSpinning = true;
 		this.#hideCursor();
+		this.#installHook();
 		this.#render();
 		this.#subscribeToProcessEvents();
 
@@ -97,18 +227,22 @@ class YoctoSpinner {
 			return this;
 		}
 
+		const shouldWriteNewline = this.#isDeferringRender;
 		this.#isSpinning = false;
 		if (this.#timer) {
 			clearInterval(this.#timer);
 			this.#timer = undefined;
 		}
 
+		this.#isDeferringRender = false;
+		this.#uninstallHook();
 		this.#showCursor();
 		this.clear();
 		this.#unsubscribeFromProcessEvents();
 
 		if (finalText) {
-			this.#stream.write(`${finalText}\n`);
+			const prefix = shouldWriteNewline ? '\n' : '';
+			this.#stream.write(`${prefix}${finalText}\n`);
 		}
 
 		return this;
@@ -161,39 +295,32 @@ class YoctoSpinner {
 			return this;
 		}
 
-		this.#clearWithoutSynchronizedOutput();
+		if (this.#lines === 0) {
+			return this;
+		}
+
+		this.#internalWrite(() => {
+			this.#stream.cursorTo(0);
+
+			for (let index = 0; index < this.#lines; index++) {
+				if (index > 0) {
+					this.#stream.moveCursor(0, -1);
+				}
+
+				this.#stream.clearLine(1);
+			}
+		});
+
+		this.#lines = 0;
 
 		return this;
 	}
 
-	#clearWithoutSynchronizedOutput() {
-		this.#stream.cursorTo(0);
-
-		for (let index = 0; index < this.#lines; index++) {
-			if (index > 0) {
-				this.#stream.moveCursor(0, -1);
-			}
-
-			this.#stream.clearLine(1);
-		}
-
-		this.#lines = 0;
-	}
-
-	#withSynchronizedOutput(action) {
-		if (!this.#isInteractive) {
-			return action();
-		}
-
-		try {
-			this.#write(SYNCHRONIZED_OUTPUT_ENABLE);
-			return action();
-		} finally {
-			this.#write(SYNCHRONIZED_OUTPUT_DISABLE);
-		}
-	}
-
 	#render() {
+		if (this.#isDeferringRender) {
+			return;
+		}
+
 		const useSynchronizedOutput = this.#isInteractive;
 		// Ensure we only update the spinner frame at the wanted interval,
 		// even if the frame method is called more often.
@@ -213,7 +340,7 @@ class YoctoSpinner {
 
 		if (useSynchronizedOutput) {
 			this.#withSynchronizedOutput(() => {
-				this.#clearWithoutSynchronizedOutput();
+				this.clear();
 				this.#write(string);
 			});
 		} else {
@@ -226,7 +353,9 @@ class YoctoSpinner {
 	}
 
 	#write(text) {
-		this.#stream.write(text);
+		this.#internalWrite(() => {
+			this.#stream.write(text);
+		});
 	}
 
 	#lineCount(text) {

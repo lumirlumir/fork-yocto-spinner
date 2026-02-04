@@ -197,6 +197,22 @@ import {red} from 'yoctocolors';
 const spinner = yoctoSpinner({text: `Loading ${red('unicorns')}`}).start();
 ```
 
+### Can I log messages while the spinner is running?
+
+Yes. The spinner clears itself, writes your message, and re-renders below. This works with `console.log()` and `console.error()` while the spinner is running:
+
+```js
+const spinner = yoctoSpinner({text: 'Processing…'}).start();
+
+console.log('Step 1 complete');
+console.error('Step 2 complete');
+
+spinner.success('Done!');
+```
+
+> [!NOTE]
+> Avoid running multiple spinners concurrently.
+
 ### Why does the spinner freeze?
 
 JavaScript is single-threaded, so any synchronous operations will block the spinner's animation. To avoid this, prefer using asynchronous operations.
