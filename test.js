@@ -582,6 +582,56 @@ test('spinner preserves external stream.write wrappers on stop', t => {
 	stream.end();
 });
 
+test('spinner.interval rejects negative values', t => {
+	t.throws(() => {
+		yoctoSpinner({spinner: {frames: ['-'], interval: -100}});
+	}, {message: /positive integer/});
+});
+
+test('spinner.interval rejects non-integer values', t => {
+	t.throws(() => {
+		yoctoSpinner({spinner: {frames: ['-'], interval: 1.5}});
+	}, {message: /positive integer/});
+});
+
+test('spinner.interval rejects zero', t => {
+	t.throws(() => {
+		yoctoSpinner({spinner: {frames: ['-'], interval: 0}});
+	}, {message: /positive integer/});
+});
+
+test('spinner.frames rejects empty array', t => {
+	t.throws(() => {
+		yoctoSpinner({spinner: {frames: []}});
+	}, {message: /non-empty array of strings/});
+});
+
+test('spinner.frames rejects non-array', t => {
+	t.throws(() => {
+		yoctoSpinner({spinner: {frames: 'not-an-array'}});
+	}, {message: /non-empty array of strings/});
+});
+
+test('spinner.frames rejects non-string elements', t => {
+	t.throws(() => {
+		yoctoSpinner({spinner: {frames: [123, 456]}});
+	}, {message: /non-empty array of strings/});
+});
+
+test('spinner.interval defaults to 80 when not provided', t => {
+	const stream = getPassThroughStream();
+	stream.isTTY = false;
+
+	const spinner = yoctoSpinner({
+		stream,
+		spinner: {frames: ['a', 'b']},
+	});
+
+	spinner.start();
+	spinner.stop();
+	t.pass();
+});
+
 test('spinner preserves pre-existing stream.write wrappers', t => {
 	const stream = getPassThroughStream();
 	stream.isTTY = true;

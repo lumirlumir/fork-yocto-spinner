@@ -64,8 +64,17 @@ class YoctoSpinner {
 
 	constructor(options = {}) {
 		const spinner = options.spinner ?? defaultSpinner;
+
+		if (!Array.isArray(spinner.frames) || spinner.frames.length === 0 || spinner.frames.some(frame => typeof frame !== 'string')) {
+			throw new Error('The `spinner.frames` option must be a non-empty array of strings');
+		}
+
+		if (spinner.interval !== undefined && !(Number.isInteger(spinner.interval) && spinner.interval > 0)) {
+			throw new Error('The `spinner.interval` option must be a positive integer');
+		}
+
 		this.#frames = spinner.frames;
-		this.#interval = spinner.interval;
+		this.#interval = spinner.interval ?? defaultSpinner.interval;
 		this.#text = options.text ?? '';
 		this.#stream = options.stream ?? process.stderr;
 		this.#color = options.color ?? 'cyan';
